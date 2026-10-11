@@ -1,0 +1,16 @@
+[project]
+name = "comfyui-poser"
+description = "Poseable 3D OpenPose skeletons (body, hands, face) with a moveable camera, rendered as a ControlNet pose image."
+version = "1.0.0"
+requires-python = ">=3.10"
+dependencies = []
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "OpenPose 3D Poser"
+Icon = ""
+includes = ["web/js"]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib -p no:cacheprovider"
+testpaths = ["tests"]

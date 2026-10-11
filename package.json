@@ -1,0 +1,17 @@
+{
+  "name": "comfyui-poser",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Frontend for the OpenPose 3D Poser ComfyUI node",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/index.js --bundle --format=esm --target=es2022 --minify --legal-comments=eof --outfile=web/js/poser.js",
+    "watch": "esbuild src/index.js --bundle --format=esm --target=es2022 --sourcemap=inline --outfile=web/js/poser.js --watch",
+    "export-presets": "node scripts/export-presets.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "three": "0.186.1",
+    "playwright": "1.63.0"
+  }
+}

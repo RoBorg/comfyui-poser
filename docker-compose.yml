@@ -1,0 +1,84 @@
+# Development environment: two ComfyUI versions with this repo mounted as a custom node.
+#   docker compose up -d comfy-latest   -> http://localhost:18188  (v0.39.x)
+#   docker compose up -d comfy-min      -> http://localhost:18189  (v0.32.0, minimum supported)
+#   docker compose run --rm test        -> run python tests
+#   docker compose run --rm e2e         -> browser smoke test against comfy-latest (screenshots in tests/e2e/out)
+#   COMFY_URL=http://comfy-min:8188 TAG=min docker compose run --rm e2e
+# Both ComfyUI services use the GPU (gpus: all) and share its VRAM; run one at a time for big models.
+
+x-comfy: &comfy
+  volumes:
+    - ./:/comfyui/custom_nodes/comfyui-poser
+    - ./docker/user:/comfyui/user
+    - ./docker/output:/comfyui/output
+    - ./docker/input:/comfyui/input
+    - ./docker/checkpoints:/comfyui/models/checkpoints
+    - ./docker/clip:/comfyui/models/clip
+    - ./docker/clip_vision:/comfyui/models/clip_vision
+    - ./docker/configs:/comfyui/models/configs
+    - ./docker/controlnet:/comfyui/models/controlnet
+    - ./docker/diffusers:/comfyui/models/diffusers
+    - ./docker/diffusion_models:/comfyui/models/diffusion_models
+    - ./docker/embeddings:/comfyui/models/embeddings
+    - ./docker/gligen:/comfyui/models/gligen
+    - ./docker/hypernetworks:/comfyui/models/hypernetworks
+    - ./docker/loras:/comfyui/models/loras
+    - ./docker/model_patches:/comfyui/models/model_patches
+    - ./docker/photomaker:/comfyui/models/photomaker
+    - ./docker/style_models:/comfyui/models/style_models
+    - ./docker/text_encoders:/comfyui/models/text_encoders
+    - ./docker/unet:/comfyui/models/unet
+    - ./docker/upscale_models:/comfyui/models/upscale_models
+    - ./docker/vae:/comfyui/models/vae
+    - ./docker/vae_approx:/comfyui/models/vae_approx
+  # Needs the NVIDIA container runtime (Docker Desktop + WSL2 GPU support, or nvidia-container-toolkit).
+  gpus: all
+  environment:
+    COMFY_ARGS: ${COMFY_ARGS:-}
+  restart: unless-stopped
+
+services:
+  comfy-latest:
+    <<: *comfy
+    build:
+      context: docker
+      args:
+        COMFYUI_VERSION: v0.39.2
+    image: comfyui-poser-dev:v0.39.2
+    ports:
+      - "${POSER_PORT_LATEST:-18188}:8188"
+
+  comfy-min:
+    <<: *comfy
+    build:
+      context: docker
+      args:
+        COMFYUI_VERSION: v0.32.0
+    image: comfyui-poser-dev:v0.32.0
+    ports:
+      - "${POSER_PORT_MIN:-18189}:8188"
+
+  test:
+    image: comfyui-poser-dev:v0.39.2
+    profiles: ["tools"]
+    volumes:
+      - ./:/comfyui/custom_nodes/comfyui-poser
+    working_dir: /comfyui/custom_nodes/comfyui-poser
+    environment:
+      PYTHONPATH: /comfyui
+    command: ["python", "-m", "pytest", "-q"]
+
+  e2e:
+    image: mcr.microsoft.com/playwright:v1.63.0-noble
+    profiles: ["tools"]
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./:/src
+    working_dir: /src
+    environment:
+      COMFY_URL: ${COMFY_URL:-http://comfy-latest:8188}
+      TAG: ${TAG:-latest}
+      VUE_NODES: ${VUE_NODES:-0}
+      OUT_DIR: tests/e2e/out
+      HOME: /tmp
+    command: ["node", "tests/e2e/smoke.mjs"]

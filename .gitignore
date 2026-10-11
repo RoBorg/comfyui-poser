@@ -1,0 +1,7 @@
+node_modules/
+__pycache__/
+*.pyc
+tests/e2e/out/
+# runtime data + models mounted into the dev containers
+docker/*
+!docker/Dockerfile
