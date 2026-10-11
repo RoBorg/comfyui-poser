@@ -96,9 +96,39 @@ check(await page.evaluate(() => window.__poser.poserEditor.history.length) >= 1,
 await shot('03-ik');
 
 // Undo restores.
-await page.getByRole('button', { name: '↶' }).click();
+await page.getByRole('button', { name: 'Undo' }).click();
 const undone = await page.evaluate(() => window.__poser.poserEditor.people[0].keypoints().body[4]);
-check(Math.hypot(undone[0] - before[0], undone[1] - before[1], undone[2] - before[2]) < 1e-3, 'undo restores the pose');
+check(Math.hypot(undone[0] - before[0], undone[1] - before[1], undone[2] - before[2]) < 1e-3, 'undo button restores the pose');
+
+// Move mode: IK handles are shown, and an ankle can be dragged directly without selecting it first.
+await page.evaluate(() => window.__poser.poserEditor.select(window.__poser.poserEditor.people[0], null));
+await page.waitForTimeout(200);
+check(await page.evaluate(() => window.__poser.poserEditor.people[0].ikMarkers.every((m) => m.visible)), 'IK handles visible in Move mode');
+await shot('03b-ik-handles');
+const anklePt = await boneScreen('l_ankle');
+const ankleBefore = await page.evaluate(() => window.__poser.poserEditor.people[0].keypoints().body[13]);
+await page.mouse.move(anklePt.x, anklePt.y);
+await page.mouse.down();
+for (let i = 1; i <= 10; i++) await page.mouse.move(anklePt.x + 3 * i, anklePt.y - 6 * i);
+await page.mouse.up();
+await page.waitForTimeout(200);
+const ankleAfter = await page.evaluate(() => window.__poser.poserEditor.people[0].keypoints().body[13]);
+check(Math.hypot(...ankleAfter.map((v, i) => v - ankleBefore[i])) > 0.05, 'dragging an IK handle moves the ankle directly');
+check(await page.evaluate(() => window.__poser.poserEditor.selectedBone) === 'l_ankle', 'dragged handle becomes selected');
+
+// Ctrl+Z over the viewport undoes the poser edit.
+await page.keyboard.press('Control+z');
+await page.waitForTimeout(200);
+const ankleUndone = await page.evaluate(() => window.__poser.poserEditor.people[0].keypoints().body[13]);
+check(Math.hypot(...ankleUndone.map((v, i) => v - ankleBefore[i])) < 1e-3, 'Ctrl+Z undoes in the viewport');
+await page.waitForTimeout(300);
+check(await page.evaluate(() => !window.__poser.poserEditor._disposed && window.comfyAPI.app.app.graph._nodes.includes(window.__poser)),
+  'Ctrl+Z in the viewport does not also undo the ComfyUI graph');
+await page.keyboard.press('Control+Shift+z');
+await page.waitForTimeout(200);
+const ankleRedone = await page.evaluate(() => window.__poser.poserEditor.people[0].keypoints().body[13]);
+check(Math.hypot(...ankleRedone.map((v, i) => v - ankleAfter[i])) < 1e-3, 'Ctrl+Shift+Z redoes');
+await page.keyboard.press('Control+z');
 
 // Presets, second person, hands.
 await page.locator('.poser-root select').nth(1).selectOption('b:Waving');
@@ -136,6 +166,17 @@ await page.waitForTimeout(200);
 const camAfter = await page.evaluate(() => window.__poser.poserEditor.editorCamera.position.toArray());
 check(Math.hypot(...camAfter.map((v, i) => v - camBefore[i])) > 0.1, 'dragging empty space orbits the camera');
 check(await page.evaluate(() => window.__poser.poserEditor.editorControls.state) === -1, 'orbit controls are idle after orbiting');
+
+// Right-drag pans the camera and must not open a ComfyUI context menu on release.
+await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+await page.mouse.down({ button: 'right' });
+for (let i = 1; i <= 8; i++) await page.mouse.move(box.x + box.width / 2 + 6 * i, box.y + box.height / 2 + 3 * i);
+await page.mouse.up({ button: 'right' });
+await page.waitForTimeout(400);
+const menus = await page.evaluate(() => [...document.querySelectorAll('.litecontextmenu, .p-contextmenu, [role="menu"]')]
+  .filter((m) => m.offsetParent !== null && getComputedStyle(m).visibility !== 'hidden').map((m) => m.className || m.getAttribute('role')));
+check(menus.length === 0, `right-drag does not open a context menu ${menus.join(', ')}`);
+await page.keyboard.press('Escape');
 
 // include_hands / include_face toggles hide those parts in the viewport.
 const hidden = await page.evaluate(async () => {

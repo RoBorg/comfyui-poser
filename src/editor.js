@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { solveTwoBone } from './ik.js';
-import { Person } from './person.js';
+import { IK_BONES, Person } from './person.js';
 import { BODY_PRESETS, DEFAULT_PRESET, HAND_PRESETS, handRotations } from './presets.js';
 import { BONE_MAP, POSABLE_BONES, mirrorEuler, mirrorName, prettyBoneName } from './rig.js';
 import { deleteUserPreset, loadUserPresets, onUserPresetsChanged, saveUserPreset } from './storage.js';
@@ -70,7 +70,10 @@ export class PoserEditor {
   // ---------------------------------------------------------------- DOM
 
   _buildDom() {
-    const btn = (label, title, onclick) => el('button', { textContent: label, title, onclick });
+    // After a click, hand focus to the key sink so a following Ctrl+Z stays with the poser.
+    const btn = (label, title, onclick) => el('button', {
+      textContent: label, title, onclick: (e) => { onclick(e); this.keySink.focus({ preventScroll: true }); },
+    });
     this.ui = {};
     const ui = this.ui;
 
@@ -78,8 +81,8 @@ export class PoserEditor {
     ui.viewCamera = btn('Camera', 'Look through the output camera; orbit/pan/zoom moves it', () => this.setView('camera'));
     ui.modeRotate = btn('Rotate', 'Click a joint, then drag the rings to rotate it', () => this.setMode('rotate'));
     ui.modeMove = btn('Move', 'Drag wrists/ankles with IK, or move the whole body by its pelvis', () => this.setMode('move'));
-    ui.undo = btn('↶', 'Undo', () => this.undo());
-    ui.redo = btn('↷', 'Redo', () => this.redo());
+    ui.undo = btn('↶ Undo', 'Undo (Ctrl+Z)', () => this.undo());
+    ui.redo = btn('Redo ↷', 'Redo (Ctrl+Shift+Z / Ctrl+Y)', () => this.redo());
     ui.mirror = btn('Mirror', 'Mirror the selected person left ↔ right', () => this.mirrorPerson());
     ui.reset = btn('Reset', 'Reset the selected joint (or the whole pose if nothing / the pelvis is selected)', () => this.resetSelection());
 
@@ -117,19 +120,33 @@ export class PoserEditor {
       ]),
     ]);
 
-    this.canvas = el('canvas', { tabIndex: 0 });
+    this.canvas = el('canvas');
+    // Keyboard focus target while the viewport is hovered/clicked. ComfyUI's change tracker
+    // handles Ctrl+Z on window (capture phase) unless a text field has focus, so a hidden
+    // read-only textarea keeps Ctrl+Z for the poser instead of also undoing the graph.
+    this.keySink = el('textarea', { class: 'poser-keys', readOnly: true, tabIndex: -1, 'aria-hidden': 'true' });
     this.frameEl = el('div', { class: 'poser-frame' }, [(this.frameImg = el('div', { class: 'poser-frame-img' }))]);
     this.statusEl = el('div', { class: 'poser-status' });
     this.badgeEl = el('div', { class: 'poser-badge' });
-    this.stage = el('div', { class: 'poser-stage' }, [this.frameEl, this.canvas, this.statusEl, this.badgeEl]);
+    this.stage = el('div', { class: 'poser-stage' }, [this.frameEl, this.canvas, this.statusEl, this.badgeEl, this.keySink]);
     // Nodes 2.0 (Vue) forwards wheel events to the graph unless the target is inside a
     // focused [data-capture-wheel] element.
     this.element = el('div', { class: 'poser-root', 'data-capture-wheel': 'true' }, [toolbar, this.stage]);
 
     // Keep wheel/keys/context menu inside the viewport instead of the ComfyUI canvas.
     this.stage.addEventListener('wheel', (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
-    this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-    this.element.addEventListener('keydown', (e) => e.stopPropagation());
+    // Right-drag pans; don't let the release open the browser's or the node's context menu.
+    this.element.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
+    this.element.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      const key = e.key.toLowerCase();
+      if (!(e.ctrlKey || e.metaKey) || (e.target !== this.keySink && /^(INPUT|TEXTAREA)$/.test(e.target.tagName))) return;
+      if (key === 'z' || key === 'y') {
+        e.preventDefault();
+        if (key === 'y' || e.shiftKey) this.redo();
+        else this.undo();
+      }
+    });
     // Nodes 2.0 starts a node drag (and takes pointer capture) on pointerdown inside the node.
     this.element.addEventListener('pointerdown', (e) => e.stopPropagation());
     // OrbitControls tracks drags with pointermove/pointerup listeners on document, but
@@ -145,11 +162,12 @@ export class PoserEditor {
     // Take focus while hovered so wheel zoom works, but never steal it from a text field.
     this.canvas.addEventListener('pointermove', () => {
       const active = document.activeElement;
-      if (active === this.canvas) return;
+      if (active === this.keySink) return;
       if (active && (active.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(active.tagName))) return;
-      this.canvas.focus({ preventScroll: true });
+      this.keySink.focus({ preventScroll: true });
     });
     this.canvas.addEventListener('pointerdown', (e) => this._onPointerDown(e));
+    this.canvas.addEventListener('pointermove', (e) => this._onPointerMove(e));
     this.canvas.addEventListener('pointerup', (e) => this._onPointerUp(e));
 
     this._fillHandSelect();
@@ -210,7 +228,9 @@ export class PoserEditor {
     }
 
     let status;
-    if (!this.selectedPerson) status = 'Click a joint to select it · drag to orbit · right-drag to pan · wheel to zoom';
+    if (this.mode === 'move' && (!this.selectedBone || !IK_BONES.includes(this.selectedBone))) {
+      status = 'Move: drag an orange handle — wrists/ankles pose the limb (IK), the pelvis ring moves the body';
+    } else if (!this.selectedPerson) status = 'Click a joint to select it · drag to orbit · right-drag to pan · wheel to zoom';
     else if (!this.selectedBone) status = `${this.selectedPerson.name}`;
     else {
       const bone = this.selectedBone;
@@ -235,8 +255,17 @@ export class PoserEditor {
     this.renderer.setClearColor(0x000000, 0);
 
     this.scene = new THREE.Scene();
-    this.grid = new THREE.GridHelper(10, 20, 0x4a505c, 0x2e333c);
-    this.scene.add(this.grid);
+    // Semi-transparent ground drawn after the skeleton (renderOrder) without writing depth, so
+    // anything below ground shows through it dimmed instead of vanishing.
+    this.ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(10, 10),
+      new THREE.MeshBasicMaterial({ color: 0x6f7c94, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    this.ground.rotation.x = -Math.PI / 2;
+    this.ground.renderOrder = 1;
+    this.grid = new THREE.GridHelper(10, 20, 0x5a6170, 0x3a404b);
+    this.grid.renderOrder = 2;
+    this.scene.add(this.ground, this.grid);
     this.peopleGroup = new THREE.Group();
     this.scene.add(this.peopleGroup);
 
@@ -338,7 +367,10 @@ export class PoserEditor {
     this.frustumHelper.visible = this.view === 'editor';
 
     const { hands, face } = this.host.getToggles();
-    for (const p of this.people) p.setDisplay({ hands, face, selected: !this.selectedPerson || p === this.selectedPerson });
+    const ik = this.mode === 'move';
+    for (const p of this.people) p.setDisplay({ hands, face, ik, selected: !this.selectedPerson || p === this.selectedPerson });
+    // Lighter ground through the output camera so a reference image stays readable.
+    this.ground.material.opacity = this.view === 'camera' ? 0.15 : 0.55;
     if (this._lastToggles !== `${hands}${face}`) {
       // Selected finger may have been hidden.
       this._lastToggles = `${hands}${face}`;
@@ -350,12 +382,68 @@ export class PoserEditor {
 
   // ---------------------------------------------------------------- interaction
 
+  _ray(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.activeCamera);
+    return this.raycaster;
+  }
+
+  _pickIkHandle(e) {
+    if (this.mode !== 'move') return null;
+    const targets = this.people.flatMap((p) => p.ikPickTargets.filter((t) => t.visible));
+    return this._ray(e).intersectObjects(targets, false)[0]?.object.userData || null;
+  }
+
   _onPointerDown(e) {
     this._down = { x: e.clientX, y: e.clientY };
-    this.canvas.focus({ preventScroll: true });
+    this.keySink.focus({ preventScroll: true });
+    if (e.button !== 0 || this.transform.axis !== null) return;
+
+    // Move mode: grab an IK handle and drag it in the screen plane, no prior click needed.
+    const hit = this._pickIkHandle(e);
+    if (!hit) return;
+    e.stopImmediatePropagation(); // keep OrbitControls / TransformControls out of it
+    this.select(hit.person, hit.bone);
+    const start = hit.person.bones[hit.bone].getWorldPosition(new THREE.Vector3());
+    const normal = this.activeCamera.getWorldDirection(new THREE.Vector3());
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(normal, start);
+    const grab = this._ray(e).ray.intersectPlane(plane, new THREE.Vector3()) || start.clone();
+    this._ikDrag = { person: hit.person, bone: hit.bone, plane, offset: start.clone().sub(grab), pointerId: e.pointerId };
+    this.canvas.setPointerCapture(e.pointerId);
+    this.canvas.style.cursor = 'grabbing';
+  }
+
+  _onPointerMove(e) {
+    const drag = this._ikDrag;
+    if (!drag) {
+      if (this.mode === 'move' && !e.buttons) this.canvas.style.cursor = this._pickIkHandle(e) ? 'grab' : '';
+      return;
+    }
+    const point = this._ray(e).ray.intersectPlane(drag.plane, new THREE.Vector3());
+    if (!point) return;
+    point.add(drag.offset);
+    if (drag.bone === 'pelvis') drag.person.root.position.copy(point);
+    else this._solveIk(drag.person, drag.bone, point);
+    drag.person.update();
+    this._invalidate();
+  }
+
+  _endIkDrag() {
+    if (!this._ikDrag) return false;
+    if (this.canvas.hasPointerCapture(this._ikDrag.pointerId)) this.canvas.releasePointerCapture(this._ikDrag.pointerId);
+    this._ikDrag = null;
+    this.canvas.style.cursor = 'grab';
+    this._attachGizmo();
+    this._commit();
+    return true;
   }
 
   _onPointerUp(e) {
+    if (this._endIkDrag()) {
+      this._down = null;
+      return;
+    }
     if (!this._down || e.button !== 0) return;
     const moved = Math.hypot(e.clientX - this._down.x, e.clientY - this._down.y);
     this._down = null;
@@ -363,11 +451,9 @@ export class PoserEditor {
     // gizmo, so joints hidden behind the rotation rings stay selectable.
     if (moved > 4) return;
 
-    const rect = this.canvas.getBoundingClientRect();
-    const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
-    this.raycaster.setFromCamera(ndc, this.activeCamera);
+    const ikHit = this._pickIkHandle(e);
     const targets = this.people.flatMap((p) => p.pickTargets.filter((t) => t.visible));
-    const hit = this.raycaster.intersectObjects(targets, false)[0];
+    const hit = ikHit ? { object: { userData: ikHit } } : this._ray(e).intersectObjects(targets, false)[0];
     if (hit) this.select(hit.object.userData.person, hit.object.userData.bone);
     else if (this.transform.axis === null) this.select(this.selectedPerson, null);
   }
@@ -382,6 +468,7 @@ export class PoserEditor {
 
   setMode(mode) {
     this.mode = mode;
+    this.canvas.style.cursor = '';
     this._attachGizmo();
     this.requestRender();
   }
@@ -423,15 +510,17 @@ export class PoserEditor {
   _onTransformChange() {
     const person = this.selectedPerson;
     if (!person) return;
-    if (this.transform.object === this.ikTarget) {
-      const [a, b, c] = IK_CHAINS[this.selectedBone].map((n) => person.bones[n]);
-      const isArm = this.selectedBone.endsWith('wrist');
-      const frame = person.bones[isArm ? 'chest' : 'pelvis'].getWorldQuaternion(new THREE.Quaternion());
-      const pole = (isArm ? new THREE.Vector3(0, -0.3, -1) : new THREE.Vector3(0, 0, 1)).normalize().applyQuaternion(frame);
-      solveTwoBone(a, b, c, this.ikTarget.position, pole);
-    }
+    if (this.transform.object === this.ikTarget) this._solveIk(person, this.selectedBone, this.ikTarget.position);
     person.update();
     this._invalidate();
+  }
+
+  _solveIk(person, bone, target) {
+    const [a, b, c] = IK_CHAINS[bone].map((n) => person.bones[n]);
+    const isArm = bone.endsWith('wrist');
+    const frame = person.bones[isArm ? 'chest' : 'pelvis'].getWorldQuaternion(new THREE.Quaternion());
+    const pole = (isArm ? new THREE.Vector3(0, -0.3, -1) : new THREE.Vector3(0, 0, 1)).normalize().applyQuaternion(frame);
+    solveTwoBone(a, b, c, target, pole);
   }
 
   _cameraChanged() {

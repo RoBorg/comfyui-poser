@@ -46,11 +46,16 @@ because ComfyUI skips only the branch with missing models.
   see exactly what will be rendered. Orbiting, panning or zooming in Camera view moves the
   output camera.
 * **Mouse**: left-drag orbits, right-drag pans, the wheel zooms. Click a joint to select it.
+  The ground is semi-transparent, so anything that sinks below it shows through, dimmed.
 * **Rotate**: drag the gizmo rings to rotate the selected joint. Every joint can be rotated,
   including each finger segment, the spine, neck and head.
-* **Move**: drag a **wrist or ankle** to pose the whole limb with IK, or drag the **pelvis**
-  to move the person.
-* **↶ / ↷**: undo and redo inside the poser. ComfyUI's own undo also works.
+* **Move**: shows orange IK handles that stay visible through the body. Drag a **diamond**
+  on a wrist or ankle to pose the whole limb with IK, or drag the **ring** around the pelvis
+  to move the person. You don't need to select a handle first; after a drag, gizmo arrows
+  appear for axis-locked moves.
+* **Undo / Redo**: undo and redo inside the poser. While the mouse is over the viewport,
+  **Ctrl+Z** and **Ctrl+Shift+Z / Ctrl+Y** do the same without touching ComfyUI's graph
+  undo. Elsewhere, ComfyUI's own undo also covers the poser.
 * **Mirror**: swaps the left and right sides of the selected person's pose.
 * **Reset joint / Reset pose**: resets the selected joint, or the whole person if the pelvis
   or nothing is selected.

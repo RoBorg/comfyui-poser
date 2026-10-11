@@ -24,6 +24,8 @@ export const CSS = `
 .poser-stage canvas { position: absolute; display: block; outline: none; touch-action: none; }
 .poser-status { position: absolute; left: 6px; bottom: 5px; right: 6px; pointer-events: none; color: #aab1bd;
   text-shadow: 0 1px 2px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.poser-keys { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none;
+  resize: none; border: 0; padding: 0; overflow: hidden; }
 .poser-badge { position: absolute; top: 5px; right: 6px; pointer-events: none; padding: 1px 5px; border-radius: 3px;
   background: #0009; color: #cfd5de; }
 `;

@@ -7,6 +7,13 @@ import {
   HEAD_POINTS, HELPER_SEGMENTS, POSABLE_BONES, handKeypointBones, restQuaternion,
 } from './rig.js';
 
+// Bones that can be dragged in Move mode: wrists/ankles via IK, pelvis moves the whole body.
+export const IK_BONES = ['pelvis', 'r_wrist', 'l_wrist', 'r_ankle', 'l_ankle'];
+const IK_COLOR = 0xff9a1f;
+const IK_SELECTED_COLOR = 0xffe14d;
+const OCTAHEDRON = new THREE.OctahedronGeometry(1, 0);
+const RING = new THREE.TorusGeometry(1, 0.07, 8, 48);
+
 const UP = new THREE.Vector3(0, 1, 0);
 const CYLINDER = new THREE.CylinderGeometry(1, 1, 1, 8, 1);
 const SPHERE = new THREE.SphereGeometry(1, 12, 8);
@@ -48,6 +55,9 @@ export class Person {
     this.pickTargets = [];  // larger invisible spheres used for clicking
     this.limbs = [];        // { mesh, from: () => Vector3, to: () => Vector3, radius }
     this.handObjects = [];
+    this.handleMaterials = new Set();
+    this.ikMarkers = [];     // Move-mode handles (drawn on top of everything)
+    this.ikPickTargets = [];
     this._buildVisuals();
     this.update();
   }
@@ -117,6 +127,7 @@ export class Person {
       handle.userData = { person: this, bone: name };
       this.bones[name].add(handle);
       this.handles.push(handle);
+      this.handleMaterials.add(handle.material);
 
       const pick = new THREE.Mesh(SPHERE, HIDDEN);
       pick.scale.setScalar(def.handle * (isFinger ? 1.6 : 1.8));
@@ -126,18 +137,42 @@ export class Person {
       this.pickTargets.push(pick);
       if (isFinger) this.handObjects.push(handle, pick);
     }
+
+    for (const name of IK_BONES) {
+      const isRoot = name === 'pelvis';
+      const mat = new THREE.MeshBasicMaterial({ color: IK_COLOR, transparent: true, opacity: 0.9, depthTest: false, depthWrite: false });
+      const marker = new THREE.Mesh(isRoot ? RING : OCTAHEDRON, mat);
+      marker.scale.setScalar(isRoot ? 0.17 : 0.045);
+      if (isRoot) marker.rotation.x = Math.PI / 2;
+      marker.renderOrder = 10;
+      marker.visible = false;
+      this.bones[name].add(marker);
+      this.ikMarkers.push(marker);
+
+      const pick = new THREE.Mesh(SPHERE, HIDDEN);
+      pick.scale.setScalar(isRoot ? 0.14 : 0.065);
+      pick.visible = false;
+      pick.userData = { person: this, bone: name, ik: true };
+      this.bones[name].add(pick);
+      this.ikPickTargets.push(pick);
+    }
   }
 
-  setDisplay({ hands = true, face = true, selected = true }) {
+  // ik: Move mode — show the IK handles and fade the ordinary joint handles.
+  setDisplay({ hands = true, face = true, selected = true, ik = false }) {
     this.face.visible = face;
     for (const obj of this.handObjects) obj.visible = hands;
     for (const mat of this.materials) {
       const base = mat.userData.baseOpacity ?? 1;
-      mat.opacity = selected ? base : base * 0.35;
+      const fade = ik && this.handleMaterials.has(mat) ? 0.3 : 1;
+      mat.opacity = (selected ? base : base * 0.35) * fade;
     }
+    for (const obj of [...this.ikMarkers, ...this.ikPickTargets]) obj.visible = ik;
+    for (const m of this.ikMarkers) m.material.opacity = selected ? 0.9 : 0.45;
   }
 
   setHighlight(boneName) {
+    IK_BONES.forEach((name, i) => this.ikMarkers[i].material.color.setHex(name === boneName ? IK_SELECTED_COLOR : IK_COLOR));
     for (const h of this.handles) {
       const on = h.userData.bone === boneName;
       h.material.color.copy(on ? new THREE.Color(0xffffff) : h.material.userData.baseColor);
@@ -225,5 +260,6 @@ export class Person {
     this.group.removeFromParent();
     this.face.geometry.dispose();
     for (const mat of this.materials) mat.dispose();
+    for (const m of this.ikMarkers) m.material.dispose();
   }
 }
