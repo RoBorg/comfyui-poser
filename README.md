@@ -20,8 +20,13 @@ drag `example_workflows/openpose_3d_poser_z_image_turbo.json` onto the canvas.
 
 The demo is ComfyUI's built-in **Z-Image-Turbo Fun Union ControlNet** template with the
 image + Canny preprocessing replaced by the poser. The union ControlNet reads the pose map
-directly and renders in 8 steps. The note in the workflow links the four model files it
-needs (about 23 GB in total). Even without them, **Run** still renders the pose preview,
+directly and renders in 8 steps. The demo uses the newer
+`Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps` ControlNet instead of the template's
+v1, because it follows poses noticeably better. In a 12-image-per-setting test scored with
+DWPose, about half as many body keypoints landed far off target (6.9% vs 14.8%), the median
+joint error dropped from 14 to 10 px, and no image ignored the pose. Keep its strength at
+1.0; at 0.8 it was barely better than v1. The note in the workflow links the four model files
+it needs (about 26 GB in total). Even without them, **Run** still renders the pose preview,
 because ComfyUI skips only the branch with missing models.
 
 ## The node: `OpenPose 3D Poser` (category `image/pose`)
@@ -60,8 +65,18 @@ because ComfyUI skips only the branch with missing models.
 * **Reset joint / Reset pose**: resets the selected joint, or the whole person if the pelvis
   or nothing is selected.
 * **Person ▾, +, −**: select, add or remove people.
-* **Pose…**: built-in body poses (T-Pose, A-Pose, Standing, Walking, Running, Sitting,
-  Kneeling, Crouching, Waving, Arms Up, Hands on Hips) plus your own.
+* **Pose…**: built-in body poses plus your own:
+  * **Standing/moving:** T-Pose, A-Pose, Standing, Walking, Running, Waving, Arms Up,
+    Hands on Hips
+  * **Sitting/kneeling:** Sitting, Kneeling, Crouching, W-Sitting
+  * **Floor:** All Fours, Lying on Back, Lying on Side (propped on an elbow), Lying on
+    Stomach (on elbows, feet up)
+  * **Yoga:** Cobra, Extended Puppy, One Leg Pigeon (back foot raised and held by the hand
+    reaching back)
+
+  Poses keep the person's facing direction, so a person you've turned stays turned, even
+  when lying down. Upright poses stand them back up. Floor poses lie side-on to the default
+  camera.
 * **Hands…**: Open, Relaxed, Fist, Point, Peace, Thumbs Up. Applies to the selected hand
   (select any arm or finger joint), otherwise to both hands.
 * **Save / 🗑**: save the selected person's pose as a named preset, or delete the last user
@@ -94,6 +109,7 @@ The frontend source is in `src/` and is bundled into `web/js/poser.js` with esbu
 nvm use 26
 npm install
 npm run build        # or: npm run watch
+npm test             # rig/preset tests (every preset touches the ground, headings, saving)
 ```
 
 A Docker dev environment runs both supported ComfyUI versions with this folder mounted as

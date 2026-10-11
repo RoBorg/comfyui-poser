@@ -137,12 +137,15 @@ export class PoserEditor {
     this.stage.addEventListener('wheel', (e) => { e.preventDefault(); e.stopPropagation(); }, { passive: false });
     // Right-drag pans; don't let the release open the browser's or the node's context menu.
     this.element.addEventListener('contextmenu', (e) => { e.preventDefault(); e.stopPropagation(); });
+    // Other keys bubble on to ComfyUI on purpose: with the key sink (a textarea) focused it
+    // ignores plain text-editing keys like Delete, but still runs shortcuts such as
+    // Ctrl+Enter (queue prompt).
     this.element.addEventListener('keydown', (e) => {
-      e.stopPropagation();
       const key = e.key.toLowerCase();
       if (!(e.ctrlKey || e.metaKey) || (e.target !== this.keySink && /^(INPUT|TEXTAREA)$/.test(e.target.tagName))) return;
       if (key === 'z' || key === 'y') {
         e.preventDefault();
+        e.stopPropagation();
         if (key === 'y' || e.shiftKey) this.redo();
         else this.undo();
       }
@@ -685,6 +688,8 @@ export class PoserEditor {
     if (!person) return;
     const rotations = Object.fromEntries(POSABLE_BONES.map((n) => [n, person.getRotation(n)]));
     for (const name of POSABLE_BONES) person.setRotation(name, mirrorEuler(rotations[mirrorName(name)]));
+    const b = person.baseOrient;
+    b.set(b.x, -b.y, -b.z, b.w); // mirror the preset orientation the same way as the pelvis
     person.update();
     if (this.selectedBone) this.select(person, mirrorName(this.selectedBone));
     this._commit();
@@ -697,7 +702,7 @@ export class PoserEditor {
       person.setRotation(this.selectedBone, [0, 0, 0]);
       person.update();
     } else {
-      person.setRotation('pelvis', [0, 0, 0]);
+      person.resetOrientation();
       person.applyPose(BODY_PRESETS[DEFAULT_PRESET]);
     }
     this._attachGizmo();
@@ -717,23 +722,53 @@ export class PoserEditor {
   frameAll() {
     const people = this.selectedPerson && this.people.length > 1 ? [this.selectedPerson] : this.people;
     if (!people.length) return;
-    const box = new THREE.Box3();
+    const points = [];
     for (const p of people) {
       const kp = p.keypoints();
-      for (const pt of [...kp.body, ...kp.right_hand, ...kp.left_hand]) box.expandByPoint(new THREE.Vector3().fromArray(pt));
-      box.expandByPoint(p.bones.head.localToWorld(new THREE.Vector3(0, 0.22, 0)));
-      box.expandByPoint(p.bones.r_toe.getWorldPosition(new THREE.Vector3()));
-      box.expandByPoint(p.bones.l_toe.getWorldPosition(new THREE.Vector3()));
+      for (const pt of [...kp.body, ...kp.right_hand, ...kp.left_hand]) points.push(new THREE.Vector3().fromArray(pt));
+      points.push(p.bones.head.localToWorld(new THREE.Vector3(0, 0.22, 0)));
+      points.push(p.bones.r_toe.getWorldPosition(new THREE.Vector3()), p.bones.l_toe.getWorldPosition(new THREE.Vector3()));
     }
     const camera = this.activeCamera;
     const controls = this.activeControls;
-    const center = box.getCenter(new THREE.Vector3());
-    const size = box.getSize(new THREE.Vector3());
-    const vfov = THREE.MathUtils.degToRad(camera.fov);
+    const center = new THREE.Box3().setFromPoints(points).getCenter(new THREE.Vector3());
     const aspect = this.view === 'camera' ? this.outputCamera.aspect : this.editorCamera.aspect;
-    const radius = Math.max(size.y / 2, size.x / 2 / aspect, size.z / 2 / aspect);
-    const dist = (radius / Math.tan(vfov / 2)) * 1.15 + size.z / 2;
+
+    // Keep the viewing direction; find the smallest distance at which every point is inside
+    // the frame (with a margin), whatever the pose — standing, lying or seen end-on.
     const dir = camera.position.clone().sub(controls.target).normalize();
+    const forward = dir.clone().negate();
+    const right = new THREE.Vector3().crossVectors(forward, camera.up);
+    if (right.lengthSq() < 1e-8) right.set(1, 0, 0);
+    right.normalize();
+    const up = new THREE.Vector3().crossVectors(right, forward);
+    const margin = 0.8; // room for joint spheres and the status line
+    const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * margin;
+    const tanH = tanV * aspect;
+    const fitDistance = () => {
+      let d = 0.5;
+      for (const pt of points) {
+        const rel = pt.clone().sub(center);
+        const depth = rel.dot(forward);
+        d = Math.max(d, Math.abs(rel.dot(right)) / tanH - depth, Math.abs(rel.dot(up)) / tanV - depth);
+      }
+      return d;
+    };
+    // The 3D box centre isn't the centre on screen; nudge it towards the middle of the
+    // projected extents and refit (the off-centre gap roughly halves each round).
+    let dist = fitDistance();
+    for (let i = 0; i < 12; i++) {
+      let [minX, maxX, minY, maxY] = [Infinity, -Infinity, Infinity, -Infinity];
+      for (const pt of points) {
+        const rel = pt.clone().sub(center);
+        const z = dist + rel.dot(forward);
+        const x = rel.dot(right) / (z * tanH);
+        const y = rel.dot(up) / (z * tanV);
+        [minX, maxX, minY, maxY] = [Math.min(minX, x), Math.max(maxX, x), Math.min(minY, y), Math.max(maxY, y)];
+      }
+      center.addScaledVector(right, ((minX + maxX) / 2) * dist * tanH).addScaledVector(up, ((minY + maxY) / 2) * dist * tanV);
+      dist = fitDistance();
+    }
     controls.target.copy(center);
     camera.position.copy(center).addScaledVector(dir, dist);
     controls.update();

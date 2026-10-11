@@ -31,6 +31,8 @@ const round = (v) => Math.round(v * 1e4) / 1e4;
 const _v = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+const ORIENT_ORDER = 'YXZ'; // preset orient: [pitch, heading offset, roll] in degrees
 
 export class Person {
   constructor(name) {
@@ -49,6 +51,9 @@ export class Person {
     }
     this.root = this.bones.pelvis;
     this.root.position.set(0, DEFAULT_ROOT_HEIGHT, 0);
+    // Body orientation set by the last preset (pelvis rotation minus heading), so applying
+    // another preset can keep the person's heading even when they are lying down.
+    this.baseOrient = new THREE.Quaternion();
 
     this.materials = [];
     this.handles = [];      // visible joint spheres
@@ -209,17 +214,40 @@ export class Person {
     bone.quaternion.copy(this.rest[name]).multiply(_q);
   }
 
-  // Full pose: resets every bone not mentioned to rest. Partial: only touches listed bones.
-  applyPose({ height, joints = {} }, { partial = false } = {}) {
+  // Heading (radians about world Y): the twist of the pelvis rotation once the preset's own
+  // orientation is removed. Exact right after a preset; approximate after manual pelvis edits.
+  heading() {
+    const q = this.root.quaternion.clone().multiply(this.baseOrient.clone().invert());
+    return Math.abs(q.y) + Math.abs(q.w) < 1e-6 ? 0 : 2 * Math.atan2(q.y, q.w);
+  }
+
+  resetOrientation() {
+    this.root.quaternion.identity();
+    this.baseOrient.identity();
+  }
+
+  // Full pose: resets every bone not mentioned to rest and sets the body orientation (upright
+  // unless the pose has `orient`), keeping the current heading. Partial: only listed bones.
+  applyPose({ height, joints = {}, orient }, { partial = false } = {}) {
     for (const name of POSABLE_BONES) {
-      if (name === 'pelvis' && partial) continue;
+      if (name === 'pelvis') continue;
       if (name in joints) this.setRotation(name, joints[name]);
-      else if (!partial && name !== 'pelvis') this.bones[name].quaternion.copy(this.rest[name]);
+      else if (!partial) this.bones[name].quaternion.copy(this.rest[name]);
+    }
+    if (!partial) {
+      const heading = this.heading();
+      const d = THREE.MathUtils.degToRad;
+      const base = orient
+        ? new THREE.Quaternion().setFromEuler(new THREE.Euler(d(orient[0]), d(orient[1]), d(orient[2]), ORIENT_ORDER))
+        : new THREE.Quaternion();
+      this.root.quaternion.setFromAxisAngle(Y_AXIS, heading).multiply(base);
+      this.baseOrient.copy(base);
     }
     if (height !== undefined) this.root.position.y = height;
     this.update();
   }
 
+  // The pose as a preset: joints, pelvis height and body orientation relative to the heading.
   getPose() {
     const joints = {};
     for (const name of POSABLE_BONES) {
@@ -227,13 +255,18 @@ export class Person {
       const r = this.getRotation(name);
       if (r.some((v) => Math.abs(v) > 1e-3)) joints[name] = r;
     }
-    return { height: round(this.root.position.y), joints };
+    const rel = new THREE.Quaternion().setFromAxisAngle(Y_AXIS, -this.heading()).multiply(this.root.quaternion);
+    _e.setFromQuaternion(rel, ORIENT_ORDER);
+    const orient = [_e.x, _e.y, _e.z].map((r) => round(THREE.MathUtils.radToDeg(r)));
+    return { height: round(this.root.position.y), joints, ...(orient.some((v) => Math.abs(v) > 1e-3) && { orient }) };
   }
 
   toJSON() {
     const rotation = this.getPose().joints;
     rotation.pelvis = this.getRotation('pelvis');
-    return { name: this.name, position: this.root.position.toArray().map(round), rotation };
+    const data = { name: this.name, position: this.root.position.toArray().map(round), rotation };
+    if (Math.abs(this.baseOrient.w) < 1 - 1e-9) data.base = this.baseOrient.toArray().map(round);
+    return data;
   }
 
   fromJSON(data) {
@@ -241,6 +274,8 @@ export class Person {
     if (Array.isArray(data.position)) this.root.position.fromArray(data.position);
     for (const name of POSABLE_BONES) this.bones[name].quaternion.copy(this.rest[name]);
     for (const [name, e] of Object.entries(data.rotation || {})) this.setRotation(name, e);
+    if (Array.isArray(data.base) && data.base.length === 4) this.baseOrient.fromArray(data.base).normalize();
+    else this.baseOrient.identity();
     this.update();
   }
 

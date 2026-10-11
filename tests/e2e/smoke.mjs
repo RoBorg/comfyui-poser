@@ -167,6 +167,24 @@ const camAfter = await page.evaluate(() => window.__poser.poserEditor.editorCame
 check(Math.hypot(...camAfter.map((v, i) => v - camBefore[i])) > 0.1, 'dragging empty space orbits the camera');
 check(await page.evaluate(() => window.__poser.poserEditor.editorControls.state) === -1, 'orbit controls are idle after orbiting');
 
+// Keyboard while the viewport has focus: Delete must not remove the node, but ComfyUI
+// shortcuts like Ctrl+Enter (queue prompt) must still work.
+await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+await page.mouse.move(box.x + box.width / 2 + 5, box.y + box.height / 2 + 5);
+check(await page.evaluate(() => document.activeElement === window.__poser.poserEditor.keySink), 'hovering the viewport gives it keyboard focus');
+await page.evaluate(() => { const { app } = window.comfyAPI.app; app.canvas.selectNode(window.__poser); });
+await page.keyboard.press('Delete');
+await page.waitForTimeout(300);
+check(await page.evaluate(() => window.comfyAPI.app.app.graph._nodes.includes(window.__poser)), 'Delete over the viewport does not delete the node');
+const queuedBefore = await page.evaluate(async () => Object.keys(await (await fetch('/history?max_items=200')).json()).length);
+await page.keyboard.press('Control+Enter');
+let queuedAfter = queuedBefore;
+for (let i = 0; i < 30 && queuedAfter === queuedBefore; i++) {
+  await page.waitForTimeout(500);
+  queuedAfter = await page.evaluate(async () => Object.keys(await (await fetch('/history?max_items=200')).json()).length);
+}
+check(queuedAfter > queuedBefore, 'Ctrl+Enter with the viewport focused queues the prompt');
+
 // Right-drag pans the camera and must not open a ComfyUI context menu on release.
 await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
 await page.mouse.down({ button: 'right' });
