@@ -64,6 +64,45 @@ const boneScreen = (bone) => page.evaluate((bone) => {
 
 const nodePos = await page.evaluate(() => [...window.__poser.pos]);
 
+// Camera preview inset in Editor view: on by default, toggleable, saved, click switches view.
+const pip = page.locator('.poser-pip');
+check(await pip.isVisible(), 'camera preview is shown in Editor view');
+const pipBox = await pip.boundingBox();
+const pipPixel = await page.evaluate(({ x, y }) => {
+  // The inset is drawn into the WebGL canvas: sample it via a fresh render + readPixels.
+  const ed = window.__poser.poserEditor;
+  ed._render();
+  const gl = ed.renderer.getContext();
+  const r = ed.canvas.getBoundingClientRect();
+  const dpr = ed.renderer.getPixelRatio();
+  const px = new Uint8Array(4);
+  gl.readPixels(Math.round((x - r.left) * dpr), Math.round((r.bottom - y) * dpr), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  return Array.from(px);
+}, { x: pipBox.x + 4, y: pipBox.y + pipBox.height - 4 });
+check(pipPixel[3] === 255, `preview inset is rendered opaque (${pipPixel})`);
+await page.getByRole('button', { name: 'Preview', exact: true }).click();
+check(!(await pip.isVisible()), 'Preview button hides the inset');
+check(JSON.parse(await page.evaluate(() => window.__poser.poserEditor.getValue())).preview === false, 'preview setting is saved with the scene');
+await page.getByRole('button', { name: 'Preview', exact: true }).click();
+check(await pip.isVisible(), 'Preview button shows it again');
+await shot('01b-preview');
+// A double click in the viewport must not open panels or resize the node.
+const uiState = () => page.evaluate(() => ({
+  panels: [...document.querySelectorAll('[class*="properties"], [class*="right-side"], [data-testid*="properties"]')]
+    .filter((e) => e.offsetParent !== null && e.getBoundingClientRect().width > 100).length,
+  width: Math.round(document.querySelector('.poser-root').getBoundingClientRect().width),
+}));
+const beforeDbl = await uiState();
+await page.locator('.poser-root canvas').dblclick({ position: { x: 20, y: 20 } });
+await page.waitForTimeout(400);
+const afterDbl = await uiState();
+check(afterDbl.panels === beforeDbl.panels && afterDbl.width === beforeDbl.width, 'double-clicking in the viewport does not open panels');
+await pip.click();
+check(await page.evaluate(() => window.__poser.poserEditor.view) === 'camera', 'clicking the preview switches to Camera view');
+check(!(await pip.isVisible()), 'no preview inset in Camera view');
+await page.getByRole('button', { name: 'Editor', exact: true }).click();
+await page.waitForTimeout(200);
+
 // Click the right elbow.
 let pt = await boneScreen('r_elbow');
 await page.mouse.click(pt.x, pt.y);

@@ -50,6 +50,9 @@ because ComfyUI skips only the branch with missing models.
   frustum. Camera looks through the output camera, letterboxed to the output size, so you
   see exactly what will be rendered. Orbiting, panning or zooming in Camera view moves the
   output camera.
+* **Preview**: in Editor view, a small inset in the bottom-right corner shows what the output
+  camera sees, updating live as you pose. Click the inset to switch to Camera view. The
+  **Preview** button turns it on or off, and the setting is saved with the workflow.
 * **Mouse**: left-drag orbits, right-drag pans, the wheel zooms. Click a joint to select it.
   The ground is semi-transparent, so anything that sinks below it shows through, dimmed.
 * **Rotate**: drag the gizmo rings to rotate the selected joint. Every joint can be rotated,

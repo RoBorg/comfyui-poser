@@ -26,6 +26,10 @@ export const CSS = `
   text-shadow: 0 1px 2px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .poser-keys { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none;
   resize: none; border: 0; padding: 0; overflow: hidden; }
+.poser-pip { position: absolute; display: none; box-sizing: border-box; outline: 1px solid #6b7382; border-radius: 2px;
+  cursor: pointer; box-shadow: 0 2px 8px #0008; }
+.poser-pip:hover { outline-color: #8fb0ff; }
+.poser-pip-label { position: absolute; left: 3px; top: 2px; font-size: 9px; color: #9aa1ad; pointer-events: none; }
 .poser-badge { position: absolute; top: 5px; right: 6px; pointer-events: none; padding: 1px 5px; border-radius: 3px;
   background: #0009; color: #cfd5de; }
 `;

@@ -50,6 +50,7 @@ export class PoserEditor {
     this.selectedPerson = null;
     this.selectedBone = null;
     this.view = 'editor';
+    this.showPreview = true; // camera preview inset in Editor view
     this.mode = 'rotate';
     this.reference = null;
     this.history = [];
@@ -79,6 +80,7 @@ export class PoserEditor {
 
     ui.viewEditor = btn('Editor', 'Free orbit view (shows the output camera as a frustum)', () => this.setView('editor'));
     ui.viewCamera = btn('Camera', 'Look through the output camera; orbit/pan/zoom moves it', () => this.setView('camera'));
+    ui.preview = btn('Preview', 'Show a small camera preview in Editor view (click it to switch to Camera)', () => this.togglePreview());
     ui.modeRotate = btn('Rotate', 'Click a joint, then drag the rings to rotate it', () => this.setMode('rotate'));
     ui.modeMove = btn('Move', 'Drag wrists/ankles with IK, or move the whole body by its pelvis', () => this.setMode('move'));
     ui.undo = btn('↶ Undo', 'Undo (Ctrl+Z)', () => this.undo());
@@ -106,7 +108,7 @@ export class PoserEditor {
     const sep = () => el('span', { class: 'poser-sep' });
     const toolbar = el('div', { class: 'poser-toolbar' }, [
       el('div', { class: 'poser-row' }, [
-        el('span', { class: 'poser-seg' }, [ui.viewEditor, ui.viewCamera]), sep(),
+        el('span', { class: 'poser-seg' }, [ui.viewEditor, ui.viewCamera]), ui.preview, sep(),
         el('span', { class: 'poser-seg' }, [ui.modeRotate, ui.modeMove]), sep(),
         ui.undo, ui.redo, ui.mirror, ui.reset,
       ]),
@@ -127,8 +129,12 @@ export class PoserEditor {
     this.keySink = el('textarea', { class: 'poser-keys', readOnly: true, tabIndex: -1, 'aria-hidden': 'true' });
     this.frameEl = el('div', { class: 'poser-frame' }, [(this.frameImg = el('div', { class: 'poser-frame-img' }))]);
     this.statusEl = el('div', { class: 'poser-status' });
+    // Outline/click target over the camera preview inset (the inset itself is drawn into the canvas).
+    this.previewEl = el('div', { class: 'poser-pip', title: 'Camera view (click to switch)', onclick: () => this.setView('camera') }, [
+      el('span', { class: 'poser-pip-label', textContent: 'camera' }),
+    ]);
     this.badgeEl = el('div', { class: 'poser-badge' });
-    this.stage = el('div', { class: 'poser-stage' }, [this.frameEl, this.canvas, this.statusEl, this.badgeEl, this.keySink]);
+    this.stage = el('div', { class: 'poser-stage' }, [this.frameEl, this.canvas, this.previewEl, this.statusEl, this.badgeEl, this.keySink]);
     // Nodes 2.0 (Vue) forwards wheel events to the graph unless the target is inside a
     // focused [data-capture-wheel] element.
     this.element = el('div', { class: 'poser-root', 'data-capture-wheel': 'true' }, [toolbar, this.stage]);
@@ -151,7 +157,9 @@ export class PoserEditor {
       }
     });
     // Nodes 2.0 starts a node drag (and takes pointer capture) on pointerdown inside the node.
+    // Double clicks (fast joint/button clicks) also stay inside the viewport.
     this.element.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.element.addEventListener('dblclick', (e) => e.stopPropagation());
     // OrbitControls tracks drags with pointermove/pointerup listeners on document, but
     // Nodes 2.0 stops those events before they get there. Hand them to document ourselves
     // (exactly once, in both renderers) so window-level listeners still see them too.
@@ -204,6 +212,8 @@ export class PoserEditor {
     if (!ui) return;
     ui.viewEditor.classList.toggle('on', this.view === 'editor');
     ui.viewCamera.classList.toggle('on', this.view === 'camera');
+    ui.preview.classList.toggle('on', this.showPreview);
+    ui.preview.disabled = this.view !== 'editor';
     ui.modeRotate.classList.toggle('on', this.mode === 'rotate');
     ui.modeMove.classList.toggle('on', this.mode === 'move');
     ui.undo.disabled = !this.history.length;
@@ -304,7 +314,8 @@ export class PoserEditor {
     this.transform.addEventListener('objectChange', () => this._onTransformChange());
     this.transform.addEventListener('mouseUp', () => this._commit());
     this.transform.addEventListener('change', () => this.requestRender());
-    this.scene.add(this.transform.getHelper());
+    this.transformHelper = this.transform.getHelper();
+    this.scene.add(this.transformHelper);
 
     this.raycaster = new THREE.Raycaster();
     this.resizeObserver = new ResizeObserver(() => this._layout());
@@ -380,7 +391,61 @@ export class PoserEditor {
       if (!hands && this.selectedBone && BONE_MAP[this.selectedBone].handle < 0.01) this.select(this.selectedPerson, null);
     }
     this.renderer.render(this.scene, this.activeCamera);
+    this._renderPreview();
     this._updateUi();
+  }
+
+  togglePreview() {
+    this.showPreview = !this.showPreview;
+    this._syncPreviewEl();
+    this._updateUi();
+    this._invalidate();
+    this.host.onChange();
+  }
+
+  // Inset rect (CSS px, top-left origin) for the camera preview, matching the output aspect.
+  _previewRect() {
+    const size = this.renderer.getSize(new THREE.Vector2());
+    const aspect = this.outputCamera.aspect;
+    const margin = 8;
+    let w = THREE.MathUtils.clamp(size.x * 0.25, 64, 240);
+    let h = w / aspect;
+    const maxH = size.y * 0.45;
+    if (h > maxH) { h = maxH; w = h * aspect; }
+    w = Math.round(w); h = Math.round(h);
+    return { x: size.x - w - margin, y: size.y - h - margin - 18, w, h };
+  }
+
+  // Draw the output camera's view into a corner of the Editor view, like Camera view shows it:
+  // black frame, faint ground, no frustum / gizmo / IK handles.
+  _syncPreviewEl() {
+    const show = this.view === 'editor' && this.showPreview;
+    this.previewEl.style.display = show ? 'block' : 'none';
+    return show;
+  }
+
+  _renderPreview() {
+    if (!this._syncPreviewEl()) return;
+    const r = this._previewRect();
+    Object.assign(this.previewEl.style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px` });
+
+    const hidden = [this.frustumHelper, this.transformHelper, ...this.people.flatMap((p) => p.ikMarkers)].filter((o) => o.visible);
+    hidden.forEach((o) => { o.visible = false; });
+    const groundOpacity = this.ground.material.opacity;
+    this.ground.material.opacity = 0.15;
+    const height = this.renderer.getSize(new THREE.Vector2()).y;
+    this.renderer.setScissorTest(true);
+    this.renderer.setScissor(r.x, height - r.y - r.h, r.w, r.h);
+    this.renderer.setViewport(r.x, height - r.y - r.h, r.w, r.h);
+    this.renderer.setClearColor(0x000000, 1);
+    this.renderer.render(this.scene, this.outputCamera);
+    // Restore full-canvas rendering state.
+    this.renderer.setClearColor(0x000000, 0);
+    this.renderer.setScissorTest(false);
+    const size = this.renderer.getSize(new THREE.Vector2());
+    this.renderer.setViewport(0, 0, size.x, size.y);
+    this.ground.material.opacity = groundOpacity;
+    hidden.forEach((o) => { o.visible = true; });
   }
 
   // ---------------------------------------------------------------- interaction
@@ -482,6 +547,7 @@ export class PoserEditor {
     this.cameraControls.enabled = view === 'camera';
     this.transform.camera = this.activeCamera;
     this.stage.classList.toggle('camera', view === 'camera');
+    this._syncPreviewEl();
     this._layout();
     this._invalidate();
   }
@@ -853,6 +919,7 @@ export class PoserEditor {
         target: this.editorControls.target.toArray().map(round),
       },
       view: this.view,
+      preview: this.showPreview,
       reference: this.reference,
       people: this.people.map((p) => ({ ...p.toJSON(), keypoints: p.keypoints() })),
     };
@@ -887,6 +954,7 @@ export class PoserEditor {
     this._applyCamera(this.outputCamera, this.cameraControls, { ...DEFAULT_CAMERA, ...(data?.camera || {}) });
     this._applyCamera(this.editorCamera, this.editorControls, { ...DEFAULT_EDITOR_CAMERA, ...(data?.editor_camera || {}) });
     this.setReference(data?.reference || null, { notify: false });
+    this.showPreview = data?.preview !== false;
     this.setView(data?.view === 'camera' ? 'camera' : 'editor');
     this.select(this.people[0] || null, null);
   }
