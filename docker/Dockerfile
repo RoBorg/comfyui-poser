@@ -23,6 +23,13 @@ WORKDIR /comfyui
 RUN pip install --no-cache-dir -r requirements.txt \
  && pip install --no-cache-dir pytest
 
+# Third-party node pack needed by the Krea 2 example workflow (reference-image conditioning
+# for the Krea 2 pose LoRA). Pinned to a reviewed commit; MIT licensed, no extra dependencies.
+ARG KREA2_OSTRIS_EDIT_COMMIT=7756566160c4a1b24bb1bd9f0ff3ced1a83d7547
+RUN git clone https://github.com/ostris/ComfyUI-Krea2-Ostris-Edit /comfyui/custom_nodes/ComfyUI-Krea2-Ostris-Edit \
+ && git -C /comfyui/custom_nodes/ComfyUI-Krea2-Ostris-Edit checkout --quiet ${KREA2_OSTRIS_EDIT_COMMIT} \
+ && rm -rf /comfyui/custom_nodes/ComfyUI-Krea2-Ostris-Edit/.git
+
 # Extra ComfyUI flags, e.g. COMFY_ARGS="--cpu" or "--lowvram".
 ENV COMFY_ARGS=""
 EXPOSE 8188

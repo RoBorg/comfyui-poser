@@ -13,21 +13,46 @@ Copy or clone this folder into `ComfyUI/custom_nodes/` and restart ComfyUI. It h
 Python dependencies beyond what ComfyUI already ships. The frontend is prebuilt in
 `web/js/poser.js`, so you don't need npm.
 
-## Demo workflow
+## Demo workflows
 
-Open **Templates → Extensions → comfyui-poser → openpose_3d_poser_z_image_turbo**, or
-drag `example_workflows/openpose_3d_poser_z_image_turbo.json` onto the canvas.
+Open **Templates → Extensions → comfyui-poser**, or drag a file from `example_workflows/`
+onto the canvas. Each demo is built on one of ComfyUI's built-in templates, with the poser
+as the pose source and a preview of the pose map. The notes in each workflow link every
+model file it needs.
 
-The demo is ComfyUI's built-in **Z-Image-Turbo Fun Union ControlNet** template with the
-image + Canny preprocessing replaced by the poser. The union ControlNet reads the pose map
-directly and renders in 8 steps. The demo uses the newer
-`Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps` ControlNet instead of the template's
-v1, because it follows poses noticeably better. In a 12-image-per-setting test scored with
-DWPose, about half as many body keypoints landed far off target (6.9% vs 14.8%), the median
-joint error dropped from 14 to 10 px, and no image ignored the pose. Keep its strength at
-1.0; at 0.8 it was barely better than v1. The note in the workflow links the four model files
-it needs (about 26 GB in total). Even without them, **Run** still renders the pose preview,
-because ComfyUI skips only the branch with missing models.
+### `openpose_3d_poser_z_image_turbo`: Z-Image Turbo + Fun Union ControlNet (~26 GB of models)
+
+Based on the **Z-Image-Turbo Fun Union ControlNet** template. The image + Canny
+preprocessing is replaced by the poser, and the union ControlNet is upgraded to
+`Z-Image-Turbo-Fun-Controlnet-Union-2.1-2602-8steps`, which follows poses noticeably better
+than the template's v1. In a 12-image-per-setting test scored with DWPose, about half as many
+body keypoints landed far off target (6.9% vs 14.8%), and no image ignored the pose. Keep its
+strength at 1.0; at 0.8 it was barely better than v1. No extra custom nodes needed.
+
+### `openpose_3d_poser_krea2_turbo`: Krea 2 Turbo + OpenPose LoRA (~17.6 GB of models)
+
+Based on the **Krea-2: Image Style Reference** template. The poser image goes in as
+reference image 1 for [thedeoxen's Krea 2 OpenPose LoRA](https://huggingface.co/thedeoxen/Krea-2-pose-controlnet)
+(Apache-2.0), using the fp8 Turbo model, 10 steps.
+
+**Requires the "Krea 2 Ostris Edit" custom node pack** (`comfyui-krea2-ostris-edit`).
+Install it with ComfyUI-Manager's *Install Missing Custom Nodes*, or clone
+https://github.com/ostris/ComfyUI-Krea2-Ostris-Edit into `custom_nodes`. The LoRA was
+trained for its **kv_cache** reference mode, and the demo uses that mode. In the same DWPose
+test this setup scored best of everything tried:
+
+| Krea 2 setup | keypoints on target | median error |
+|---|---|---|
+| core nodes only (built-in template path) | 74% | 41 px |
+| Ostris nodes, kv_cache **on** (used) | **97.5%** | **13 px** |
+| Ostris nodes, kv_cache off | 75% | 27 px |
+
+The core-only and kv_cache-off variants also produced blotchy artifacts. The pose image is
+snapped to the nearest Kontext-friendly size (≈1 MP) and the output follows it; 1248×832
+(used in the demo) is one of those sizes.
+
+Even without the models installed, **Run** still renders the pose preview, because ComfyUI
+skips only the branch with missing models.
 
 ## The node: `OpenPose 3D Poser` (category `image/pose`)
 
@@ -128,12 +153,13 @@ VUE_NODES=1 TAG=vue docker compose run --rm e2e
 
 The e2e test saves screenshots and the rendered output to `tests/e2e/out/`.
 
-The demo workflow is generated from the built-in template inside a real browser, so the
-frontend serialises the subgraph itself. Re-run this after changing the node's inputs:
+The demo workflows are generated from the built-in templates inside a real browser, so the
+frontend serialises the subgraphs itself. The dev images include a pinned copy of the Krea 2
+Ostris Edit node pack (see `docker/Dockerfile`) so the Krea 2 demo can run there. Re-run this after changing the node's inputs:
 
 ```sh
-docker compose run --rm e2e node scripts/make-demo-workflow.mjs   # writes example_workflows/
-docker compose run --rm e2e node tests/e2e/demo-workflow.mjs      # loads + validates it
+docker compose run --rm e2e node scripts/make-demo-workflow.mjs   # writes example_workflows/ (both demos)
+docker compose run --rm e2e node tests/e2e/demo-workflow.mjs      # loads + validates them
 ```
 `npm run export-presets` regenerates `tests/fixtures/presets.json` from the JS rig. It
 holds one person per built-in preset and is used by the Python tests.
