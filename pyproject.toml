@@ -2,11 +2,15 @@
 name = "comfyui-poser"
 description = "Poseable 3D OpenPose skeletons (body, hands, face) with a moveable camera, rendered as a ControlNet pose image."
 version = "1.0.0"
+license = "MIT"
 requires-python = ">=3.10"
 dependencies = []
 
+[project.urls]
+repository = "https://github.com/roborg/comfyui-poser"
+
 [tool.comfy]
-PublisherId = ""
+PublisherId = "roborg"
 DisplayName = "OpenPose 3D Poser"
 Icon = ""
 includes = ["web/js"]
