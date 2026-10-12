@@ -7,7 +7,9 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.urls]
-repository = "https://github.com/roborg/comfyui-poser"
+Repository = "https://github.com/roborg/comfyui-poser"
+Documentation = "https://github.com/roborg/comfyui-poser"
+"Bug Tracker" = "https://github.com/roborg/comfyui-poser/issues"
 
 [tool.comfy]
 PublisherId = "roborg"
